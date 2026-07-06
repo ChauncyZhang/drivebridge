@@ -76,6 +76,17 @@ function Ensure-LarkLogin {
         throw "未找到 lark-cli。安装包可能不完整，请确认 app\tools\lark-cli 存在。"
     }
 
+    Write-Host "[检查] 正在检查飞书 CLI 配置..."
+    & lark-cli config show *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[初始化] 首次使用需要初始化飞书登录配置。"
+        Write-Host "[提示] 如果命令行显示验证链接，请复制到浏览器完成授权；完成后回到此窗口继续。"
+        & lark-cli config init --new --brand feishu --lang zh
+        if ($LASTEXITCODE -ne 0) {
+            throw "飞书 CLI 初始化失败"
+        }
+    }
+
     Write-Host "[检查] 正在验证飞书登录状态..."
     & lark-cli auth status --json --verify | Out-Null
     if ($LASTEXITCODE -ne 0) {
