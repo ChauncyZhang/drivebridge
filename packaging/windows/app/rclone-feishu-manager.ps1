@@ -93,25 +93,41 @@ function Invoke-LarkCli {
     }
 }
 
+function Test-LarkConfig {
+    return ((Invoke-LarkCli -CliArgs @("config", "show") -Quiet) -eq 0)
+}
+
+function Test-LarkAuth {
+    return ((Invoke-LarkCli -CliArgs @("auth", "status", "--json", "--verify") -Quiet) -eq 0)
+}
+
 function Ensure-LarkLogin {
     if (-not (Get-Command lark-cli -ErrorAction SilentlyContinue)) {
         throw "未找到 lark-cli。安装包可能不完整，请确认 app\tools\lark-cli 存在。"
     }
 
     Write-Host "[检查] 正在检查飞书 CLI 配置..."
-    if ((Invoke-LarkCli -CliArgs @("config", "show") -Quiet) -ne 0) {
+    if (-not (Test-LarkConfig)) {
         Write-Host "[初始化] 首次使用需要初始化飞书登录配置。"
         Write-Host "[提示] 如果命令行显示验证链接，请复制到浏览器完成授权；完成后回到此窗口继续。"
-        if ((Invoke-LarkCli -CliArgs @("config", "init", "--new", "--brand", "feishu", "--lang", "zh")) -ne 0) {
+        $initExit = Invoke-LarkCli -CliArgs @("config", "init", "--new", "--brand", "feishu", "--lang", "zh")
+        if (($initExit -ne 0) -and -not (Test-LarkConfig)) {
             throw "飞书 CLI 初始化失败"
+        }
+        if ($initExit -ne 0) {
+            Write-Host "[提示] 飞书 CLI 已写入配置，继续登录流程。"
         }
     }
 
     Write-Host "[检查] 正在验证飞书登录状态..."
-    if ((Invoke-LarkCli -CliArgs @("auth", "status", "--json", "--verify") -Quiet) -ne 0) {
+    if (-not (Test-LarkAuth)) {
         Write-Host "[登录] 正在打开飞书用户登录..."
-        if ((Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs")) -ne 0) {
+        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs")
+        if (($loginExit -ne 0) -and -not (Test-LarkAuth)) {
             throw "飞书用户登录失败"
+        }
+        if ($loginExit -ne 0) {
+            Write-Host "[提示] 飞书用户登录状态有效，继续挂载流程。"
         }
     }
     Write-Host "[完成] 飞书登录状态有效。"
