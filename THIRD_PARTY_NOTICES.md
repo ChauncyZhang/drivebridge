@@ -21,7 +21,19 @@ rclone MIT License text is preserved in [COPYING](COPYING).
 - Copyright: Copyright (c) 2026 Lark Technologies Pte. Ltd.
 
 This project calls `lark-cli` for Feishu/Lark user authentication and Open
-Platform API access. `lark-cli` is not maintained by this project.
+Platform API access. Windows desktop packages bundle `lark-cli` so ordinary
+users do not need to install it separately. `lark-cli` is not maintained by
+this project.
+
+## Node.js
+
+- Project: Node.js
+- Website: https://nodejs.org/
+- Source: https://github.com/nodejs/node
+- License: MIT License
+
+Windows desktop packages bundle `node.exe` only to run the bundled `lark-cli`
+entrypoint. Node.js is not maintained by this project.
 
 Users are responsible for complying with the applicable Feishu/Lark terms,
 privacy policies, and Open Platform rules when using Feishu/Lark APIs.

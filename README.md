@@ -25,6 +25,9 @@ This repository is an unofficial modified build/fork of
 backend and a desktop-oriented launcher for mounting storage backends as local
 drives.
 
+The Windows desktop package bundles `lark-cli` and Node.js for Feishu/Lark
+login and API access; end users only need WinFsp for filesystem mounting.
+
 It is not affiliated with, endorsed by, or maintained by the rclone project,
 Feishu, Lark, or Lark Technologies. The original rclone copyright and MIT
 license notice are preserved in [COPYING](COPYING). Additional attribution and
