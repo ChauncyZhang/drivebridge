@@ -65,9 +65,9 @@ function Ensure-Rclone {
 }
 
 function Invoke-Rclone {
-    param([string[]]$Args)
+    param([string[]]$RcloneArgs)
     Ensure-Rclone
-    & $rcloneExe @Args
+    & $rcloneExe @RcloneArgs
     return $LASTEXITCODE
 }
 
