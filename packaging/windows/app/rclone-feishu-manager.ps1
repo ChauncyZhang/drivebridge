@@ -156,6 +156,10 @@ function Test-LarkAuth {
     return ((Invoke-LarkCli -CliArgs @("auth", "status", "--json", "--verify") -Quiet) -eq 0)
 }
 
+function Test-LarkDriveAccess {
+    return ((Invoke-LarkCli -CliArgs @("drive", "files", "list", "--as", "user", "--json") -Quiet) -eq 0)
+}
+
 function Ensure-LarkLogin {
     if (-not (Get-Command lark-cli -ErrorAction SilentlyContinue)) {
         throw "未找到 lark-cli。安装包可能不完整，请确认 app\tools\lark-cli 存在。"
@@ -177,12 +181,24 @@ function Ensure-LarkLogin {
     Write-Host "[检查] 正在验证飞书登录状态..."
     if (-not (Test-LarkAuth)) {
         Write-Host "[登录] 正在打开飞书用户登录..."
-        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs")
+        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs", "--scope", "space:document:retrieve")
         if (($loginExit -ne 0) -and -not (Test-LarkAuth)) {
             throw "飞书用户登录失败"
         }
         if ($loginExit -ne 0) {
             Write-Host "[提示] 飞书用户登录状态有效，继续挂载流程。"
+        }
+    }
+
+    Write-Host "[检查] 正在验证飞书云盘访问权限..."
+    if (-not (Test-LarkDriveAccess)) {
+        Write-Host "[授权] 当前用户缺少飞书云盘访问授权，正在重新打开飞书授权。"
+        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs", "--scope", "space:document:retrieve")
+        if (($loginExit -ne 0) -and -not (Test-LarkDriveAccess)) {
+            throw "飞书云盘授权失败。请确认授权页面勾选并同意所需权限：space:document:retrieve。"
+        }
+        if (-not (Test-LarkDriveAccess)) {
+            throw "飞书云盘授权后仍无法访问。请重新运行诊断并查看 lark-cli 与 Feishu 后端列表。"
         }
     }
     Write-Host "[完成] 飞书登录状态有效。"
@@ -597,6 +613,7 @@ function Show-Diagnostics {
         $null = Invoke-LarkCli -CliArgs @("--version")
         Write-Host "config show：$(if (Test-LarkConfig) { '成功' } else { '失败' })"
         Write-Host "auth status --verify：$(if (Test-LarkAuth) { '成功' } else { '失败' })"
+        Write-Host "drive files list：$(if (Test-LarkDriveAccess) { '成功' } else { '失败' })"
     }
 
     Invoke-DiagnosticCommand "rclone" {
