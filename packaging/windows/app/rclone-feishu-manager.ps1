@@ -295,6 +295,41 @@ function Test-RcOnline {
     }
 }
 
+function Test-MountPointReady {
+    $settings = Get-Settings
+    $mountPoint = Normalize-MountPoint $settings.MountPoint
+    $root = "$mountPoint\"
+    try {
+        if (-not (Test-Path -LiteralPath $root)) {
+            return $false
+        }
+        $entries = [System.IO.Directory]::EnumerateFileSystemEntries($root)
+        $enumerator = $entries.GetEnumerator()
+        try {
+            $null = $enumerator.MoveNext()
+        }
+        finally {
+            if ($enumerator -is [System.IDisposable]) {
+                $enumerator.Dispose()
+            }
+        }
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-MountStatusText {
+    if (-not (Test-RcOnline)) {
+        return "未运行"
+    }
+    if (Test-MountPointReady) {
+        return "运行中"
+    }
+    return "运行中但盘符不可用"
+}
+
 function Refresh-Cache {
     Ensure-Rclone
     if (-not (Test-RcOnline)) {
@@ -349,7 +384,7 @@ function Show-Status {
     Write-Host "挂载盘符：$($settings.MountPoint)"
     Write-Host "开机启动：$(if (Test-AutoStartEnabled $settings.AutoStart) { '已启用' } else { '已关闭' })"
     Write-Host "启动项  ：$(if (Test-StartupInstalled) { '已安装' } else { '未安装' })"
-    Write-Host "挂载状态：$(if (Test-RcOnline) { '运行中' } else { '未运行' })"
+    Write-Host "挂载状态：$(Get-MountStatusText)"
 }
 
 function Get-MountArgs {
@@ -419,9 +454,14 @@ function Start-Mount {
         Install-Startup -Silent -NoPersist
     }
 
-    if (Test-RcOnline) {
+    if ((Test-RcOnline) -and (Test-MountPointReady)) {
         Write-Host "[提示] 托管挂载已在运行。如需重新挂载，请先停止当前挂载。"
         return
+    }
+    if (Test-RcOnline) {
+        Write-Host "[提示] 检测到后台进程在线但盘符不可用，正在重启挂载。"
+        Stop-Mount
+        Start-Sleep -Seconds 1
     }
 
     Ensure-Remote -Remote $settings.Remote -Backend $settings.Backend
@@ -433,11 +473,15 @@ function Start-Mount {
     Write-Host "[运行] 正在后台将 $($settings.Remote): 挂载到 $($settings.MountPoint)"
     Start-MountWorkerProcess
 
-    for ($i = 0; $i -lt 10; $i++) {
+    for ($i = 0; $i -lt 20; $i++) {
         Start-Sleep -Milliseconds 500
-        if (Test-RcOnline) {
+        if ((Test-RcOnline) -and (Test-MountPointReady)) {
             Write-Host "[完成] 挂载已在后台运行，可以关闭此窗口。"
             return
+        }
+        $failure = Get-MountFailureFromLog
+        if (-not [string]::IsNullOrWhiteSpace($failure)) {
+            throw "挂载失败：$failure"
         }
     }
 
@@ -446,7 +490,7 @@ function Start-Mount {
         throw "挂载失败：$failure"
     }
 
-    Write-Host "[提示] 已启动后台挂载进程，但尚未检测到运行状态。请稍后在管理器中查看状态；日志位置：$(Join-Path $logDir 'mount.log')"
+    throw "后台挂载进程已启动，但盘符 $($settings.MountPoint) 仍不可访问。日志位置：$(Join-Path $logDir 'mount.log')"
 }
 
 function Install-Startup {
