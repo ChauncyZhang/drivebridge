@@ -11,6 +11,10 @@ $settingsPath = Join-Path $rootDir "rclone-feishu.settings.json"
 $logDir = Join-Path $rootDir "logs"
 $startupName = "rclone-feishu-mount.vbs"
 $bundledLarkCliDir = Join-Path $rootDir "tools\lark-cli"
+$winFspBinDirs = @(
+    (Join-Path ${env:ProgramFiles(x86)} "WinFsp\bin"),
+    (Join-Path $env:ProgramFiles "WinFsp\bin")
+)
 $defaultSettings = [ordered]@{
     Backend = "feishu"
     Remote = "Feishu"
@@ -35,7 +39,30 @@ function Initialize-BundledTools {
     }
 }
 
+function Get-WinFspBinDir {
+    foreach ($dir in $winFspBinDirs) {
+        if ([string]::IsNullOrWhiteSpace($dir)) {
+            continue
+        }
+        if (Test-Path -LiteralPath (Join-Path $dir "winfsp-x64.dll")) {
+            return $dir
+        }
+    }
+    return $null
+}
+
+function Initialize-WinFspTools {
+    $winFspBin = Get-WinFspBinDir
+    if (-not [string]::IsNullOrWhiteSpace($winFspBin)) {
+        $paths = @($env:PATH -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($paths -notcontains $winFspBin) {
+            $env:PATH = "$winFspBin;$env:PATH"
+        }
+    }
+}
+
 Initialize-BundledTools
+Initialize-WinFspTools
 
 function Get-Settings {
     $settings = [ordered]@{}
@@ -62,6 +89,34 @@ function Ensure-Rclone {
     if (-not (Test-Path -LiteralPath $rcloneExe)) {
         throw "未找到 rclone 主程序：$rcloneExe"
     }
+}
+
+function Ensure-WinFsp {
+    Initialize-WinFspTools
+    if (-not [string]::IsNullOrWhiteSpace((Get-WinFspBinDir))) {
+        return
+    }
+
+    Write-Host "[安装] 当前系统缺少 WinFsp，正在尝试自动安装。"
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw "未安装 WinFsp，且未找到 winget。请手动安装 WinFsp：https://winfsp.dev/rel/"
+    }
+
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-source-agreements
+        $installExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldPreference
+    }
+
+    Initialize-WinFspTools
+    if (($installExit -ne 0) -or [string]::IsNullOrWhiteSpace((Get-WinFspBinDir))) {
+        throw "WinFsp 自动安装失败。请手动安装 WinFsp 后重新挂载：https://winfsp.dev/rel/"
+    }
+    Write-Host "[完成] WinFsp 已安装。"
 }
 
 function Invoke-Rclone {
@@ -265,6 +320,28 @@ function Stop-Mount {
     Write-Host "[完成] 已停止挂载。"
 }
 
+function Get-MountLogFile {
+    return (Join-Path $logDir "mount.log")
+}
+
+function Reset-MountLog {
+    $logFile = Get-MountLogFile
+    if (Test-Path -LiteralPath $logFile) {
+        Clear-Content -LiteralPath $logFile
+    }
+}
+
+function Get-MountFailureFromLog {
+    $logFile = Get-MountLogFile
+    if (-not (Test-Path -LiteralPath $logFile)) {
+        return $null
+    }
+    $failure = Get-Content -LiteralPath $logFile -Tail 80 | Where-Object {
+        $_ -match 'CRITICAL|Fatal error|failed to mount|cannot find winfsp'
+    } | Select-Object -Last 1
+    return $failure
+}
+
 function Show-Status {
     $settings = Get-Settings
     Write-Host "连接类型：$($settings.Backend)"
@@ -278,7 +355,7 @@ function Show-Status {
 function Get-MountArgs {
     param([pscustomobject]$Settings)
 
-    $logFile = Join-Path $logDir "mount.log"
+    $logFile = Get-MountLogFile
     return @(
         "mount", "$($Settings.Remote):", $Settings.MountPoint,
         "--vfs-cache-mode", $Settings.CacheMode,
@@ -308,6 +385,7 @@ function Start-MountWorkerProcess {
 
 function Invoke-MountWorker {
     Ensure-Rclone
+    Ensure-WinFsp
     Ensure-Directory $logDir
     $settings = Get-Settings
     $settings.MountPoint = Normalize-MountPoint $settings.MountPoint
@@ -322,6 +400,7 @@ function Start-Mount {
     )
 
     Ensure-Rclone
+    Ensure-WinFsp
     Ensure-Directory $logDir
 
     if ($Interactive -or -not (Test-Path -LiteralPath $settingsPath)) {
@@ -350,6 +429,7 @@ function Start-Mount {
         Ensure-LarkLogin
     }
 
+    Reset-MountLog
     Write-Host "[运行] 正在后台将 $($settings.Remote): 挂载到 $($settings.MountPoint)"
     Start-MountWorkerProcess
 
@@ -359,6 +439,11 @@ function Start-Mount {
             Write-Host "[完成] 挂载已在后台运行，可以关闭此窗口。"
             return
         }
+    }
+
+    $failure = Get-MountFailureFromLog
+    if (-not [string]::IsNullOrWhiteSpace($failure)) {
+        throw "挂载失败：$failure"
     }
 
     Write-Host "[提示] 已启动后台挂载进程，但尚未检测到运行状态。请稍后在管理器中查看状态；日志位置：$(Join-Path $logDir 'mount.log')"
