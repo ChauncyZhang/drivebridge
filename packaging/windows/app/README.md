@@ -32,6 +32,7 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 - `rclone-feishu-install-startup.cmd`：修复或重新启用开机启动。
 - `rclone-feishu-refresh.cmd`：立即清理挂载目录缓存。
 - `rclone-feishu-stop.cmd`：停止当前挂载。
+- `rclone-feishu-diagnose.cmd`：输出 WinFsp、飞书登录、rclone、盘符和日志诊断信息。
 - `rclone-feishu-uninstall.cmd`：停止挂载、移除开机启动，并可选择删除安装目录。
 
 ## 管理器菜单
@@ -44,6 +45,7 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 - `停止挂载`：停止当前托管的 rclone 挂载进程。
 - `打开 rclone 高级配置`：进入 rclone 原生配置界面。
 - `卸载`：移除开机启动、停止挂载，并可选择删除配置和安装目录。
+- `诊断`：输出当前机器的挂载环境和错误日志，用于排查测试机问题。
 
 ## 同步行为
 

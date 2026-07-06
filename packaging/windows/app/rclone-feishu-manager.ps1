@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("Menu", "Mount", "MountSaved", "MountWorker", "Switch", "InstallStartup", "RemoveStartup", "Refresh", "Unmount", "Status", "Uninstall", "Config")]
+    [ValidateSet("Menu", "Mount", "MountSaved", "MountWorker", "Switch", "InstallStartup", "RemoveStartup", "Refresh", "Unmount", "Status", "Uninstall", "Config", "Diagnose")]
     [string]$Action = "Menu"
 )
 
@@ -546,6 +546,90 @@ function Open-RcloneConfig {
     & $rcloneExe config
 }
 
+function Invoke-DiagnosticCommand {
+    param(
+        [string]$Title,
+        [scriptblock]$Command
+    )
+
+    Write-Host ""
+    Write-Host "[$Title]"
+    try {
+        & $Command
+        if ($LASTEXITCODE -ne $null) {
+            Write-Host "退出码：$LASTEXITCODE"
+        }
+    }
+    catch {
+        Write-Host "异常：$($_.Exception.Message)"
+    }
+}
+
+function Show-Diagnostics {
+    $settings = Get-Settings
+    $mountPoint = Normalize-MountPoint $settings.MountPoint
+    $mountRoot = "$mountPoint\"
+    $logFile = Get-MountLogFile
+
+    Write-Host "===== rclone-feishu 诊断 ====="
+    Write-Host "程序目录：$rootDir"
+    Write-Host "rclone ：$rcloneExe"
+    Write-Host "连接类型：$($settings.Backend)"
+    Write-Host "连接名称：$($settings.Remote)"
+    Write-Host "挂载盘符：$mountPoint"
+    Write-Host "RC 地址 ：$($settings.RcAddr)"
+    Write-Host "启动项  ：$(if (Test-StartupInstalled) { '已安装' } else { '未安装' })"
+    Write-Host "挂载状态：$(Get-MountStatusText)"
+
+    Invoke-DiagnosticCommand "WinFsp" {
+        $winFspBin = Get-WinFspBinDir
+        Write-Host "WinFsp bin：$(if ($winFspBin) { $winFspBin } else { '未找到' })"
+        Write-Host "当前 PATH 中 WinFsp："
+        $env:PATH -split ';' | Where-Object { $_ -like '*WinFsp*' } | ForEach-Object { Write-Host "  $_" }
+        if ($winFspBin) {
+            Get-ChildItem -LiteralPath $winFspBin -Filter 'winfsp-*.dll' | Select-Object Name,Length | Format-Table -AutoSize
+        }
+    }
+
+    Invoke-DiagnosticCommand "lark-cli" {
+        $cmd = Get-Command lark-cli -ErrorAction SilentlyContinue
+        Write-Host "lark-cli：$(if ($cmd) { $cmd.Source } else { '未找到' })"
+        $null = Invoke-LarkCli -CliArgs @("--version")
+        Write-Host "config show：$(if (Test-LarkConfig) { '成功' } else { '失败' })"
+        Write-Host "auth status --verify：$(if (Test-LarkAuth) { '成功' } else { '失败' })"
+    }
+
+    Invoke-DiagnosticCommand "rclone" {
+        Ensure-Rclone
+        & $rcloneExe version
+        & $rcloneExe listremotes
+    }
+
+    Invoke-DiagnosticCommand "Feishu 后端列表" {
+        & $rcloneExe lsjson "$($settings.Remote):" --max-depth 1 --low-level-retries 1 --retries 1
+    }
+
+    Invoke-DiagnosticCommand "RC 状态" {
+        & $rcloneExe rc --rc-addr $settings.RcAddr --rc-no-auth core/stats
+    }
+
+    Invoke-DiagnosticCommand "盘符访问" {
+        Write-Host "Test-Path ${mountRoot}：$(Test-Path -LiteralPath $mountRoot)"
+        if (Test-Path -LiteralPath $mountRoot) {
+            Get-ChildItem -LiteralPath $mountRoot -Force | Select-Object -First 20 Mode,Length,Name,LastWriteTime | Format-Table -AutoSize
+        }
+    }
+
+    Invoke-DiagnosticCommand "mount.log 最近 120 行" {
+        if (Test-Path -LiteralPath $logFile) {
+            Get-Content -LiteralPath $logFile -Tail 120
+        }
+        else {
+            Write-Host "日志不存在：$logFile"
+        }
+    }
+}
+
 function Uninstall-Package {
     Write-Host "卸载将停止当前挂载、移除开机启动，并可选择删除安装目录。"
     $confirm = Read-Host "确认继续请输入 YES"
@@ -583,7 +667,7 @@ function Show-Menu {
         Write-Host "===== rclone-feishu 管理器 ====="
         Show-Status
         Write-Host ""
-        $choice = Read-Host "1) 挂载 / 启动`n2) 切换连接类型或盘符`n3) 启用开机启动`n4) 关闭开机启动`n5) 立即刷新缓存`n6) 停止挂载`n7) 打开 rclone 高级配置`n8) 卸载`n0) 退出`n请选择"
+        $choice = Read-Host "1) 挂载 / 启动`n2) 切换连接类型或盘符`n3) 启用开机启动`n4) 关闭开机启动`n5) 立即刷新缓存`n6) 停止挂载`n7) 打开 rclone 高级配置`n8) 卸载`n9) 诊断`n0) 退出`n请选择"
         switch ($choice) {
             "1" { Start-Mount -Interactive:$false -AllowConfigure:$true; return }
             "2" { Stop-Mount; Start-Mount -Interactive:$true -AllowConfigure:$true; return }
@@ -593,6 +677,7 @@ function Show-Menu {
             "6" { Stop-Mount }
             "7" { Open-RcloneConfig }
             "8" { Uninstall-Package; return }
+            "9" { Show-Diagnostics }
             "0" { return }
             default { Write-Host "无效选择。" }
         }
@@ -613,6 +698,7 @@ try {
         "Status" { Show-Status }
         "Uninstall" { Uninstall-Package }
         "Config" { Open-RcloneConfig }
+        "Diagnose" { Show-Diagnostics; exit 0 }
     }
 }
 catch {
