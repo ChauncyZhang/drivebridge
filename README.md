@@ -18,6 +18,19 @@
 
 # Rclone
 
+## DriveBridge notice
+
+This repository is an unofficial modified build/fork of
+[rclone](https://github.com/rclone/rclone) that adds a Feishu/Lark Drive
+backend and a desktop-oriented launcher for mounting storage backends as local
+drives.
+
+It is not affiliated with, endorsed by, or maintained by the rclone project,
+Feishu, Lark, or Lark Technologies. The original rclone copyright and MIT
+license notice are preserved in [COPYING](COPYING). Additional attribution and
+third-party notices are documented in [NOTICE.md](NOTICE.md) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 Rclone *("rsync for cloud storage")* is a command-line program to sync files and
 directories to and from different cloud storage providers.
 
