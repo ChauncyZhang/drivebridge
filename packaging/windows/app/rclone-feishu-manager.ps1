@@ -11,6 +11,7 @@ $settingsPath = Join-Path $rootDir "rclone-feishu.settings.json"
 $logDir = Join-Path $rootDir "logs"
 $startupName = "rclone-feishu-mount.vbs"
 $bundledLarkCliDir = Join-Path $rootDir "tools\lark-cli"
+$requiredFeishuScopes = "space:document:retrieve drive:file:delete space:document:delete"
 $winFspBinDirs = @(
     (Join-Path ${env:ProgramFiles(x86)} "WinFsp\bin"),
     (Join-Path $env:ProgramFiles "WinFsp\bin")
@@ -160,6 +161,10 @@ function Test-LarkDriveAccess {
     return ((Invoke-LarkCli -CliArgs @("drive", "files", "list", "--as", "user", "--json") -Quiet) -eq 0)
 }
 
+function Test-LarkRequiredScopes {
+    return ((Invoke-LarkCli -CliArgs @("auth", "check", "--scope", $requiredFeishuScopes, "--json") -Quiet) -eq 0)
+}
+
 function Ensure-LarkLogin {
     if (-not (Get-Command lark-cli -ErrorAction SilentlyContinue)) {
         throw "未找到 lark-cli。安装包可能不完整，请确认 app\tools\lark-cli 存在。"
@@ -181,7 +186,7 @@ function Ensure-LarkLogin {
     Write-Host "[检查] 正在验证飞书登录状态..."
     if (-not (Test-LarkAuth)) {
         Write-Host "[登录] 正在打开飞书用户登录..."
-        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs", "--scope", "space:document:retrieve")
+        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs", "--scope", $requiredFeishuScopes)
         if (($loginExit -ne 0) -and -not (Test-LarkAuth)) {
             throw "飞书用户登录失败"
         }
@@ -190,12 +195,24 @@ function Ensure-LarkLogin {
         }
     }
 
+    Write-Host "[检查] 正在验证飞书云盘必要权限..."
+    if (-not (Test-LarkRequiredScopes)) {
+        Write-Host "[授权] 当前用户缺少飞书云盘必要权限，正在重新打开飞书授权。"
+        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs", "--scope", $requiredFeishuScopes)
+        if (($loginExit -ne 0) -and -not (Test-LarkRequiredScopes)) {
+            throw "飞书云盘授权失败。请确认授权页面勾选并同意所需权限：$requiredFeishuScopes。"
+        }
+        if (-not (Test-LarkRequiredScopes)) {
+            throw "飞书云盘授权后仍缺少必要权限：$requiredFeishuScopes。"
+        }
+    }
+
     Write-Host "[检查] 正在验证飞书云盘访问权限..."
     if (-not (Test-LarkDriveAccess)) {
         Write-Host "[授权] 当前用户缺少飞书云盘访问授权，正在重新打开飞书授权。"
-        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs", "--scope", "space:document:retrieve")
+        $loginExit = Invoke-LarkCli -CliArgs @("auth", "login", "--domain", "drive", "--domain", "docs", "--scope", $requiredFeishuScopes)
         if (($loginExit -ne 0) -and -not (Test-LarkDriveAccess)) {
-            throw "飞书云盘授权失败。请确认授权页面勾选并同意所需权限：space:document:retrieve。"
+            throw "飞书云盘授权失败。请确认授权页面勾选并同意所需权限：$requiredFeishuScopes。"
         }
         if (-not (Test-LarkDriveAccess)) {
             throw "飞书云盘授权后仍无法访问。请重新运行诊断并查看 lark-cli 与 Feishu 后端列表。"
@@ -613,6 +630,8 @@ function Show-Diagnostics {
         $null = Invoke-LarkCli -CliArgs @("--version")
         Write-Host "config show：$(if (Test-LarkConfig) { '成功' } else { '失败' })"
         Write-Host "auth status --verify：$(if (Test-LarkAuth) { '成功' } else { '失败' })"
+        Write-Host "必要权限：$(if (Test-LarkRequiredScopes) { '成功' } else { '失败' })"
+        Write-Host "权限列表：$requiredFeishuScopes"
         Write-Host "drive files list：$(if (Test-LarkDriveAccess) { '成功' } else { '失败' })"
     }
 
