@@ -487,19 +487,19 @@ function Start-Mount {
         Install-Startup -Silent -NoPersist
     }
 
+    Ensure-Remote -Remote $settings.Remote -Backend $settings.Backend
+    if ($settings.Backend -ieq "feishu") {
+        Ensure-LarkLogin
+    }
+
     if ((Test-RcOnline) -and (Test-MountPointReady)) {
-        Write-Host "[提示] 托管挂载已在运行。如需重新挂载，请先停止当前挂载。"
+        Write-Host "[提示] 托管挂载已在运行，飞书权限已检查。"
         return
     }
     if (Test-RcOnline) {
         Write-Host "[提示] 检测到后台进程在线但盘符不可用，正在重启挂载。"
         Stop-Mount
         Start-Sleep -Seconds 1
-    }
-
-    Ensure-Remote -Remote $settings.Remote -Backend $settings.Backend
-    if ($settings.Backend -ieq "feishu") {
-        Ensure-LarkLogin
     }
 
     Reset-MountLog
