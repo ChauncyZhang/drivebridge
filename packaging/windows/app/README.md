@@ -21,7 +21,7 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 2. 双击外层目录的 `启动飞书云盘.cmd`。
 3. 选择 `挂载 / 启动`。
 4. 首次使用时会自动初始化飞书 CLI 配置并检查登录状态；如未登录，会打开飞书登录流程。如果窗口中显示验证链接，请复制到浏览器完成授权。
-5. 工具会在挂载前用当前用户身份验证飞书云盘必要权限和列表权限；如果登录有效但权限不足，会重新打开授权并要求包含 `space:document:retrieve`、`drive:file:delete`、`space:document:delete`。
+5. 工具会在挂载前用当前用户身份验证飞书云盘必要权限和列表权限；如果登录有效但权限不足，会重新打开授权并要求包含 `space:document:retrieve`、`drive:file`、`space:document:delete`。
 6. 选择飞书云盘和盘符，例如 `X:`。
 
 首次配置或切换配置后，工具会自动启用当前 Windows 用户的开机启动，不再额外询问。首次启动会立即在后台挂载，不需要重启 Windows。
@@ -52,9 +52,9 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 
 如果 WinFsp 和 rclone 都正常，但挂载后看不到飞书云盘内容，不要只检查 `auth status --verify`。该状态只能说明用户登录仍有效，不能证明云盘 API 权限可用。
 
-当前管理器会在挂载前运行 `lark-cli auth check --scope "space:document:retrieve drive:file:delete space:document:delete" --json` 和 `lark-cli drive files list --as user --json` 作为云盘权限预检。诊断菜单也会显示必要权限和 `drive files list` 的结果。若任一项失败，重新走飞书授权并确认授权包含 `space:document:retrieve`、`drive:file:delete`、`space:document:delete`，再重试挂载。
+当前管理器会在挂载前运行 `lark-cli auth check --scope "space:document:retrieve drive:file space:document:delete" --json` 和 `lark-cli drive files list --as user --json` 作为云盘权限预检。诊断菜单也会显示必要权限和 `drive files list` 的结果。若任一项失败，重新走飞书授权并确认授权包含 `space:document:retrieve`、`drive:file`、`space:document:delete`，再重试挂载。
 
-如果在本地盘符里删除文件后，退出文件夹再进入又重新出现，通常说明远端删除没有成功。最常见原因是当前飞书登录缺少 `drive:file:delete` 或 `space:document:delete` 删除权限；重新授权后再删除即可同步到远端。
+如果在本地盘符里删除文件后，退出文件夹再进入又重新出现，通常说明远端删除没有成功。最常见原因是当前飞书登录缺少 `drive:file` 或 `space:document:delete` 删除权限；重新授权后再删除即可同步到远端。
 
 ## 同步行为
 

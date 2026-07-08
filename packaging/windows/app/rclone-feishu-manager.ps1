@@ -11,7 +11,7 @@ $settingsPath = Join-Path $rootDir "rclone-feishu.settings.json"
 $logDir = Join-Path $rootDir "logs"
 $startupName = "rclone-feishu-mount.vbs"
 $bundledLarkCliDir = Join-Path $rootDir "tools\lark-cli"
-$requiredFeishuScopes = "space:document:retrieve drive:file:delete space:document:delete"
+$requiredFeishuScopes = "space:document:retrieve drive:file space:document:delete"
 $winFspBinDirs = @(
     (Join-Path ${env:ProgramFiles(x86)} "WinFsp\bin"),
     (Join-Path $env:ProgramFiles "WinFsp\bin")
