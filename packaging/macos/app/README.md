@@ -1,6 +1,8 @@
 # DriveBridge macOS 版
 
-这个包用于在 macOS 上把飞书云盘或其他 rclone 后端挂载成本地目录。普通用户只需要双击外层目录的 `启动DriveBridge.command`，`app` 目录是内部文件。
+这个包用于在 macOS 上把飞书云盘挂载成本地目录。普通用户只需要双击外层目录的 `启动DriveBridge.command`，`app` 目录是内部文件。
+
+当前 macOS 版已对齐飞书主流程：自动创建 Feishu 连接、初始化飞书 CLI、检查用户登录、检查云盘权限、后台挂载、登录启动、停止、刷新、卸载和诊断。SMB/FTP/其他 rclone 后端保留入口，但仍走 rclone 原生配置界面。
 
 ## 使用前准备
 
@@ -12,20 +14,24 @@ brew install --cask macfuse
 
 如果系统提示允许扩展，请在“系统设置 > 隐私与安全性”中允许 macFUSE，然后按系统提示重启。
 
-飞书云盘需要安装并登录 lark-cli：
+完整安装包会尽量内置 lark-cli。如果当前包没有内置，飞书云盘需要先安装 lark-cli：
 
 ```bash
 npm install -g @larksuite/cli
-lark-cli config init --new
-lark-cli auth login --domain drive --domain docs
+```
+
+首次挂载时管理器会自动执行飞书 CLI 初始化和用户授权。需要授权的范围是：
+
+```text
+space:document:retrieve drive:file space:document:delete
 ```
 
 ## 快速开始
 
 1. 双击外层目录的 `启动DriveBridge.command`。
 2. 选择 `挂载 / 启动`。
-3. 首次运行选择飞书云盘或其他后端。
-4. 直接回车使用默认挂载目录，例如 `~/DriveBridge/Feishu`。
+3. 首次运行直接回车使用默认飞书云盘和默认挂载目录 `~/DriveBridge/Feishu`。
+4. 如果窗口显示飞书验证链接，请复制到浏览器完成授权，然后回到窗口继续。
 
 首次配置或切换配置后，工具会自动启用当前 macOS 用户的登录启动，不再额外询问。首次启动会立即在后台挂载，不需要重启 macOS。
 
@@ -37,7 +43,7 @@ chmod +x 启动DriveBridge.command app/drivebridge-manager.sh app/drivebridge-rc
 
 ## 管理器菜单
 
-- `挂载 / 启动`：首次运行时完成配置，自动启用登录启动，然后在后台挂载。
+- `挂载 / 启动`：首次运行时完成配置、登录和权限检查，自动启用登录启动，然后在后台挂载。
 - `切换连接类型或挂载目录`：停止当前挂载，重新选择飞书、SMB、FTP 或其他 rclone 后端。
 - `启用登录启动`：安装当前用户的 LaunchAgent。
 - `关闭登录启动`：移除当前用户的 LaunchAgent。
@@ -45,14 +51,37 @@ chmod +x 启动DriveBridge.command app/drivebridge-manager.sh app/drivebridge-rc
 - `停止挂载`：停止当前后台挂载。
 - `打开 rclone 高级配置`：进入 rclone 原生配置界面。
 - `卸载`：移除登录启动、停止挂载，并可选择删除配置和安装目录。
+- `诊断`：输出 macFUSE、lark-cli、飞书权限、rclone 远端、RC 状态、挂载目录和最近日志。
+
+## 行为说明
+
+- 本地上传、删除普通文件会通过 rclone 写回飞书云盘。
+- 飞书在线文档会以 `.url` 文件显示。删除对应 `.url` 文件会删除远端在线文档。
+- 飞书云端主动删除后，macOS 挂载目录可能需要等待短缓存过期；也可以在管理器中选择 `立即刷新缓存`。
+- 飞书在线文档不是普通二进制文件，大小可能显示为 `0 KB`；普通上传文件会尽量显示真实大小。
 
 ## 文件说明
 
 - `drivebridge-manager.sh`：macOS 管理器。
 - `drivebridge-rclone-arm64`：Apple Silicon 使用的 rclone。
 - `drivebridge-rclone-amd64`：Intel Mac 使用的 rclone。
+- `tools/lark-cli/lark-cli`：可选的内置飞书 CLI。
 - `drivebridge.settings`：首次配置后生成的本地配置。
 - `logs/mount.log`：挂载日志。
+
+## 构建包
+
+在 macOS 上从仓库根目录执行：
+
+```bash
+./packaging/macos/build-package.sh host
+```
+
+如果当前 Mac 环境具备对应架构的 cgo 构建能力，也可以生成双架构包：
+
+```bash
+./packaging/macos/build-package.sh both
+```
 
 ## 出处和许可证
 

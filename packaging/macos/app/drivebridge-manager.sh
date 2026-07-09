@@ -6,9 +6,11 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS_FILE="$ROOT_DIR/drivebridge.settings"
 LOG_DIR="$ROOT_DIR/logs"
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.drivebridge.mount.plist"
+REQUIRED_FEISHU_SCOPES="space:document:retrieve drive:file space:document:delete"
 
 BACKEND="feishu"
 REMOTE="Feishu"
+REMOTE_PATH=""
 MOUNT_POINT="$HOME/DriveBridge/Feishu"
 AUTO_START="true"
 CACHE_MODE="writes"
@@ -18,11 +20,10 @@ RC_ADDR="127.0.0.1:5574"
 
 mkdir -p "$LOG_DIR"
 
-if [ "$(uname -m)" = "arm64" ]; then
-  RCLONE="$ROOT_DIR/drivebridge-rclone-arm64"
-else
-  RCLONE="$ROOT_DIR/drivebridge-rclone-amd64"
-fi
+case "$(uname -m)" in
+  arm64) RCLONE="$ROOT_DIR/drivebridge-rclone-arm64" ;;
+  *) RCLONE="$ROOT_DIR/drivebridge-rclone-amd64" ;;
+esac
 
 shell_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
@@ -39,6 +40,7 @@ save_settings() {
   {
     printf "BACKEND=%s\n" "$(shell_quote "$BACKEND")"
     printf "REMOTE=%s\n" "$(shell_quote "$REMOTE")"
+    printf "REMOTE_PATH=%s\n" "$(shell_quote "$REMOTE_PATH")"
     printf "MOUNT_POINT=%s\n" "$(shell_quote "$MOUNT_POINT")"
     printf "AUTO_START=%s\n" "$(shell_quote "$AUTO_START")"
     printf "CACHE_MODE=%s\n" "$(shell_quote "$CACHE_MODE")"
@@ -48,9 +50,16 @@ save_settings() {
   } > "$SETTINGS_FILE"
 }
 
+initialize_bundled_tools() {
+  if [ -x "$ROOT_DIR/tools/lark-cli/lark-cli" ]; then
+    export PATH="$ROOT_DIR/tools/lark-cli:$PATH"
+  fi
+}
+
 ensure_rclone() {
   if [ ! -f "$RCLONE" ]; then
     echo "[错误] 未找到 DriveBridge 主程序：$RCLONE"
+    echo "请确认 macOS 包内包含 drivebridge-rclone-arm64 或 drivebridge-rclone-amd64。"
     exit 1
   fi
   chmod +x "$RCLONE" 2>/dev/null || true
@@ -71,21 +80,111 @@ ensure_macos_fuse() {
   exit 1
 }
 
+invoke_lark_quiet() {
+  lark-cli "$@" >/dev/null 2>&1
+}
+
+test_lark_config() {
+  invoke_lark_quiet config show
+}
+
+test_lark_auth() {
+  invoke_lark_quiet auth status --json --verify
+}
+
+test_lark_required_scopes() {
+  invoke_lark_quiet auth check --scope "$REQUIRED_FEISHU_SCOPES" --json
+}
+
+test_lark_drive_access() {
+  invoke_lark_quiet drive files list --as user --json
+}
+
 ensure_lark_login() {
+  initialize_bundled_tools
   if ! command -v lark-cli >/dev/null 2>&1; then
-    echo "[错误] 未找到 lark-cli。请先安装并登录："
+    echo "[错误] 未找到 lark-cli。请先安装 @larksuite/cli，或使用内置 lark-cli 的完整安装包。"
     echo "  npm install -g @larksuite/cli"
-    echo "  lark-cli config init --new"
-    echo "  lark-cli auth login --domain drive --domain docs"
     exit 1
   fi
 
+  echo "[检查] 正在检查飞书 CLI 配置..."
+  if ! test_lark_config; then
+    echo "[初始化] 首次使用需要初始化飞书登录配置。"
+    echo "[提示] 如果命令行显示验证链接，请复制到浏览器完成授权；完成后回到此窗口继续。"
+    if ! lark-cli config init --new --brand feishu --lang zh; then
+      if ! test_lark_config; then
+        echo "[错误] 飞书 CLI 初始化失败"
+        exit 1
+      fi
+      echo "[提示] 飞书 CLI 已写入配置，继续登录流程。"
+    fi
+  fi
+
   echo "[检查] 正在验证飞书登录状态..."
-  if ! lark-cli auth status --json --verify >/dev/null 2>&1; then
+  if ! test_lark_auth; then
     echo "[登录] 正在打开飞书用户登录..."
-    lark-cli auth login --domain drive --domain docs
+    if ! lark-cli auth login --domain drive --domain docs --scope "$REQUIRED_FEISHU_SCOPES"; then
+      if ! test_lark_auth; then
+        echo "[错误] 飞书用户登录失败"
+        exit 1
+      fi
+      echo "[提示] 飞书用户登录状态有效，继续挂载流程。"
+    fi
+  fi
+
+  echo "[检查] 正在验证飞书云盘必要权限..."
+  if ! test_lark_required_scopes; then
+    echo "[授权] 当前用户缺少飞书云盘必要权限，正在重新打开飞书授权。"
+    if ! lark-cli auth login --domain drive --domain docs --scope "$REQUIRED_FEISHU_SCOPES"; then
+      if ! test_lark_required_scopes; then
+        echo "[错误] 飞书云盘授权失败。请确认授权包含：$REQUIRED_FEISHU_SCOPES。"
+        exit 1
+      fi
+    fi
+    if ! test_lark_required_scopes; then
+      echo "[错误] 飞书云盘授权后仍缺少必要权限：$REQUIRED_FEISHU_SCOPES。"
+      exit 1
+    fi
+  fi
+
+  echo "[检查] 正在验证飞书云盘访问权限..."
+  if ! test_lark_drive_access; then
+    echo "[授权] 当前用户缺少飞书云盘访问授权，正在重新打开飞书授权。"
+    if ! lark-cli auth login --domain drive --domain docs --scope "$REQUIRED_FEISHU_SCOPES"; then
+      if ! test_lark_drive_access; then
+        echo "[错误] 飞书云盘授权失败。请确认授权包含：$REQUIRED_FEISHU_SCOPES。"
+        exit 1
+      fi
+    fi
+    if ! test_lark_drive_access; then
+      echo "[错误] 飞书云盘授权后仍无法访问。请运行诊断查看 lark-cli 与远端列表。"
+      exit 1
+    fi
   fi
   echo "[完成] 飞书登录状态有效。"
+}
+
+normalize_remote_path() {
+  value="${1:-}"
+  value="$(printf "%s" "$value" | sed 's#\\#/#g' | sed 's#^[[:space:]]*##; s#[[:space:]]*$##')"
+  if [ -z "$value" ] || [ "$value" = "/" ]; then
+    printf ""
+    return
+  fi
+  case "$value" in
+    /*) printf "%s" "$value" ;;
+    *) printf "/%s" "$value" ;;
+  esac
+}
+
+get_remote_spec() {
+  path_part="$(normalize_remote_path "$REMOTE_PATH")"
+  if [ -z "$path_part" ]; then
+    printf "%s:" "$REMOTE"
+  else
+    printf "%s:%s" "$REMOTE" "$path_part"
+  fi
 }
 
 ensure_remote() {
@@ -109,6 +208,26 @@ test_rc_online() {
   load_settings
   ensure_rclone
   "$RCLONE" rc --rc-addr "$RC_ADDR" --rc-no-auth core/stats >/dev/null 2>&1
+}
+
+test_mount_point_ready() {
+  load_settings
+  [ -d "$MOUNT_POINT" ] || return 1
+  mount_dev="$(stat -f "%d" "$MOUNT_POINT" 2>/dev/null || true)"
+  parent_dev="$(stat -f "%d" "$(dirname "$MOUNT_POINT")" 2>/dev/null || true)"
+  [ -n "$mount_dev" ] && [ -n "$parent_dev" ] && [ "$mount_dev" != "$parent_dev" ]
+}
+
+get_mount_status_text() {
+  if ! test_rc_online; then
+    printf "未运行"
+    return
+  fi
+  if test_mount_point_ready; then
+    printf "运行中"
+    return
+  fi
+  printf "运行中但挂载目录不可用"
 }
 
 xml_escape() {
@@ -183,14 +302,15 @@ select_settings() {
   [ -n "$choice" ] || choice="1"
 
   case "$choice" in
-    1) BACKEND="feishu"; REMOTE="Feishu"; MOUNT_POINT="$HOME/DriveBridge/Feishu" ;;
-    2) BACKEND="smb"; REMOTE="SMB"; MOUNT_POINT="$HOME/DriveBridge/SMB" ;;
-    3) BACKEND="ftp"; REMOTE="FTP"; MOUNT_POINT="$HOME/DriveBridge/FTP" ;;
+    1) BACKEND="feishu"; REMOTE="Feishu"; REMOTE_PATH=""; MOUNT_POINT="$HOME/DriveBridge/Feishu" ;;
+    2) BACKEND="smb"; REMOTE="SMB"; REMOTE_PATH=""; MOUNT_POINT="$HOME/DriveBridge/SMB" ;;
+    3) BACKEND="ftp"; REMOTE="FTP"; REMOTE_PATH=""; MOUNT_POINT="$HOME/DriveBridge/FTP" ;;
     4)
       printf "请输入 rclone 后端类型，例如 sftp、webdav、s3: "
       read -r BACKEND
       printf "请输入连接名称: "
       read -r REMOTE
+      REMOTE_PATH=""
       MOUNT_POINT="$HOME/DriveBridge/$REMOTE"
       ;;
     *) echo "[错误] 无效的连接类型选择。"; exit 1 ;;
@@ -214,7 +334,8 @@ mount_worker() {
   ensure_rclone
   ensure_macos_fuse
   mkdir -p "$MOUNT_POINT" "$LOG_DIR"
-  exec "$RCLONE" mount "$REMOTE:" "$MOUNT_POINT" \
+  remote_spec="$(get_remote_spec)"
+  exec "$RCLONE" mount "$remote_spec" "$MOUNT_POINT" \
     --vfs-cache-mode "$CACHE_MODE" \
     --vfs-write-back 1s \
     --links \
@@ -227,6 +348,15 @@ mount_worker() {
     --log-level INFO
 }
 
+reset_mount_log() {
+  : > "$LOG_DIR/mount.log"
+}
+
+mount_failure_from_log() {
+  [ -f "$LOG_DIR/mount.log" ] || return 1
+  grep -E "CRITICAL|Fatal error|failed to mount|cannot find|mount stopped" "$LOG_DIR/mount.log" | tail -n 1
+}
+
 start_mount() {
   allow_configure="${1:-true}"
   load_settings
@@ -234,7 +364,7 @@ start_mount() {
 
   if [ ! -f "$SETTINGS_FILE" ]; then
     if [ "$allow_configure" != "true" ]; then
-      echo "[错误] 没有保存的配置。请先双击“启动DriveBridge.command”完成一次配置。"
+      echo "[错误] 没有保存的配置。请先双击 启动DriveBridge.command 完成一次配置。"
       exit 1
     fi
     select_settings
@@ -246,31 +376,49 @@ start_mount() {
     install_startup >/dev/null
   fi
 
-  if test_rc_online; then
-    echo "[提示] 托管挂载已在运行。"
-    return
-  fi
-
   ensure_remote
   if [ "$BACKEND" = "feishu" ]; then
     ensure_lark_login
   fi
   ensure_macos_fuse
 
-  echo "[运行] 正在后台将 $REMOTE: 挂载到 $MOUNT_POINT"
+  if test_rc_online && test_mount_point_ready; then
+    echo "[提示] 托管挂载已在运行，连接状态已检查。"
+    return
+  fi
+  if test_rc_online; then
+    echo "[提示] 检测到后台进程在线但挂载目录不可用，正在重启挂载。"
+    stop_mount
+    sleep 1
+  fi
+
+  reset_mount_log
+  remote_spec="$(get_remote_spec)"
+  echo "[运行] 正在后台将 $remote_spec 挂载到 $MOUNT_POINT"
   start_mount_worker_process
 
   i=0
-  while [ "$i" -lt 10 ]; do
+  while [ "$i" -lt 20 ]; do
     sleep 0.5
-    if test_rc_online; then
+    if test_rc_online && test_mount_point_ready; then
       echo "[完成] 挂载已在后台运行，可以关闭此窗口。"
       return
+    fi
+    failure="$(mount_failure_from_log || true)"
+    if [ -n "$failure" ]; then
+      echo "[错误] 挂载失败：$failure"
+      exit 1
     fi
     i=$((i + 1))
   done
 
-  echo "[提示] 已启动后台挂载进程，但尚未检测到运行状态。请稍后查看状态或日志：$LOG_DIR/mount.log"
+  failure="$(mount_failure_from_log || true)"
+  if [ -n "$failure" ]; then
+    echo "[错误] 挂载失败：$failure"
+    exit 1
+  fi
+  echo "[错误] 后台挂载进程已启动，但挂载目录 $MOUNT_POINT 仍不可访问。日志位置：$LOG_DIR/mount.log"
+  exit 1
 }
 
 stop_mount() {
@@ -299,6 +447,8 @@ show_status() {
   load_settings
   echo "连接类型：$BACKEND"
   echo "连接名称：$REMOTE"
+  remote_path="$(normalize_remote_path "$REMOTE_PATH")"
+  [ -n "$remote_path" ] && echo "远端目录：$remote_path"
   echo "挂载目录：$MOUNT_POINT"
   if [ "$AUTO_START" = "false" ]; then
     echo "登录启动：已关闭"
@@ -310,10 +460,90 @@ show_status() {
   else
     echo "启动项  ：未安装"
   fi
-  if test_rc_online; then
-    echo "挂载状态：运行中"
+  echo "挂载状态：$(get_mount_status_text)"
+}
+
+diagnostic_command() {
+  title="$1"
+  shift
+  echo ""
+  echo "[$title]"
+  "$@" || echo "退出码：$?"
+}
+
+show_diagnostics() {
+  load_settings
+  echo "===== DriveBridge 诊断 ====="
+  echo "程序目录：$ROOT_DIR"
+  echo "rclone ：$RCLONE"
+  echo "连接类型：$BACKEND"
+  echo "连接名称：$REMOTE"
+  remote_path="$(normalize_remote_path "$REMOTE_PATH")"
+  if [ -z "$remote_path" ]; then
+    echo "远端目录：/"
   else
-    echo "挂载状态：未运行"
+    echo "远端目录：$remote_path"
+  fi
+  echo "挂载目录：$MOUNT_POINT"
+  echo "RC 地址 ：$RC_ADDR"
+  if test_startup_installed; then
+    echo "启动项  ：已安装"
+  else
+    echo "启动项  ：未安装"
+  fi
+  echo "挂载状态：$(get_mount_status_text)"
+
+  echo ""
+  echo "[macFUSE]"
+  if [ -d "/Library/Filesystems/macfuse.fs" ] || pkgutil --pkg-info io.macfuse.pkg.MacFUSE >/dev/null 2>&1; then
+    echo "macFUSE：已检测到"
+  else
+    echo "macFUSE：未检测到"
+  fi
+
+  if [ "$BACKEND" = "feishu" ]; then
+    echo ""
+    echo "[lark-cli]"
+    if command -v lark-cli >/dev/null 2>&1; then
+      echo "lark-cli：$(command -v lark-cli)"
+      lark-cli --version || true
+    else
+      echo "lark-cli：未找到"
+    fi
+    echo "config show：$(test_lark_config && echo 成功 || echo 失败)"
+    echo "auth status --verify：$(test_lark_auth && echo 成功 || echo 失败)"
+    echo "必要权限：$(test_lark_required_scopes && echo 成功 || echo 失败)"
+    echo "权限列表：$REQUIRED_FEISHU_SCOPES"
+    echo "drive files list：$(test_lark_drive_access && echo 成功 || echo 失败)"
+  fi
+
+  echo ""
+  echo "[rclone]"
+  ensure_rclone
+  "$RCLONE" version || true
+  "$RCLONE" listremotes || true
+
+  echo ""
+  echo "[远端列表]"
+  "$RCLONE" lsjson "$(get_remote_spec)" --max-depth 1 --low-level-retries 1 --retries 1 || true
+
+  echo ""
+  echo "[RC 状态]"
+  "$RCLONE" rc --rc-addr "$RC_ADDR" --rc-no-auth core/stats || true
+
+  echo ""
+  echo "[挂载目录访问]"
+  echo "test -d $MOUNT_POINT：$(test -d "$MOUNT_POINT" && echo True || echo False)"
+  if [ -d "$MOUNT_POINT" ]; then
+    ls -la "$MOUNT_POINT" | head -n 25 || true
+  fi
+
+  echo ""
+  echo "[mount.log 最近 120 行]"
+  if [ -f "$LOG_DIR/mount.log" ]; then
+    tail -n 120 "$LOG_DIR/mount.log"
+  else
+    echo "日志不存在：$LOG_DIR/mount.log"
   fi
 }
 
@@ -362,6 +592,7 @@ show_menu() {
     echo "6) 停止挂载"
     echo "7) 打开 rclone 高级配置"
     echo "8) 卸载"
+    echo "9) 诊断"
     echo "0) 退出"
     printf "请选择: "
     read -r choice
@@ -374,11 +605,14 @@ show_menu() {
       6) stop_mount ;;
       7) open_config ;;
       8) uninstall_package; return ;;
+      9) show_diagnostics ;;
       0) return ;;
       *) echo "无效选择。" ;;
     esac
   done
 }
+
+initialize_bundled_tools
 
 case "$ACTION" in
   menu) show_menu ;;
@@ -391,6 +625,7 @@ case "$ACTION" in
   refresh) refresh_cache ;;
   unmount) stop_mount ;;
   status) show_status ;;
+  diagnose) show_diagnostics ;;
   uninstall) uninstall_package ;;
   config) open_config ;;
   *) echo "[错误] 未知动作：$ACTION"; exit 1 ;;
