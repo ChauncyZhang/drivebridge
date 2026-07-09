@@ -2,7 +2,7 @@
 
 这个包用于在 macOS 上把飞书云盘挂载成本地目录。普通用户只需要双击外层目录的 `启动DriveBridge.command`，`app` 目录是内部文件。
 
-当前 macOS 版已对齐飞书主流程：自动创建 Feishu 连接、初始化飞书 CLI、检查用户登录、检查云盘权限、后台挂载、登录启动、停止、刷新、卸载和诊断。SMB/FTP/其他 rclone 后端保留入口，但仍走 rclone 原生配置界面。
+当前 macOS 版已对齐飞书主流程：自动创建 Feishu 连接、初始化飞书 CLI、检查用户登录、检查云盘权限、后台挂载、登录启动、停止、刷新、卸载和诊断。FTP 会使用中文表单配置主机、端口、用户名、密码、加密方式和远端目录。SMB/其他 rclone 后端保留入口，但仍走 rclone 原生配置界面。
 
 ## 使用前准备
 
@@ -52,6 +52,22 @@ chmod +x 启动DriveBridge.command app/drivebridge-manager.sh app/drivebridge-rc
 - `打开 rclone 高级配置`：进入 rclone 原生配置界面。
 - `卸载`：移除登录启动、停止挂载，并可选择删除配置和安装目录。
 - `诊断`：输出 macFUSE、lark-cli、飞书权限、rclone 远端、RC 状态、挂载目录和最近日志。
+
+## FTP 配置
+
+选择 `FTP` 时，管理器会直接创建或更新 rclone 的 FTP 连接配置，不再进入 rclone 英文向导。需要填写：
+
+- 主机：例如 `ftp.example.com` 或内网 IP。
+- 加密方式：普通 FTP、显式 FTPS 或隐式 FTPS。
+- 端口：普通 FTP 和显式 FTPS 默认 `21`，隐式 FTPS 默认 `990`。
+- 用户名和密码：密码会写入 rclone 的加密配置，不写入 `drivebridge.settings`。
+- 远端目录：直接回车表示 FTP 根目录；也可以填写 `/public` 这类子目录。
+
+没有现成 FTP 服务器时，可以在仓库源码目录运行本地模拟测试。它会临时启动一个本机 FTP 服务，然后验证列表、上传、读取和删除：
+
+```bash
+./packaging/tests/local-ftp-smoke.sh
+```
 
 ## 行为说明
 

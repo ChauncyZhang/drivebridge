@@ -100,6 +100,33 @@ test_lark_drive_access() {
   invoke_lark_quiet drive files list --as user --json
 }
 
+read_required_text() {
+  prompt="$1"
+  while true; do
+    printf "%s: " "$prompt" >&2
+    read -r value
+    value="$(printf "%s" "$value" | sed 's#^[[:space:]]*##; s#[[:space:]]*$##')"
+    if [ -n "$value" ]; then
+      printf "%s" "$value"
+      return
+    fi
+    echo "[提示] 不能为空。" >&2
+  done
+}
+
+read_text_with_default() {
+  prompt="$1"
+  default_value="$2"
+  printf "%s [默认：%s]: " "$prompt" "$default_value" >&2
+  read -r value
+  value="$(printf "%s" "$value" | sed 's#^[[:space:]]*##; s#[[:space:]]*$##')"
+  if [ -z "$value" ]; then
+    printf "%s" "$default_value"
+  else
+    printf "%s" "$value"
+  fi
+}
+
 ensure_lark_login() {
   initialize_bundled_tools
   if ! command -v lark-cli >/dev/null 2>&1; then
@@ -189,6 +216,15 @@ get_remote_spec() {
 
 ensure_remote() {
   ensure_rclone
+  if [ "$BACKEND" = "ftp" ]; then
+    if "$RCLONE" listremotes | grep -Fxq "$REMOTE:"; then
+      echo "[完成] FTP 连接配置 \"$REMOTE\" 已存在。"
+      return
+    fi
+    echo "[错误] FTP 连接配置不存在。请在管理器中选择 切换连接类型或挂载目录 后重新配置 FTP。"
+    exit 1
+  fi
+
   if "$RCLONE" listremotes | grep -Fxq "$REMOTE:"; then
     echo "[完成] 连接配置 \"$REMOTE\" 已存在。"
     return
@@ -202,6 +238,80 @@ ensure_remote() {
 
   echo "[配置] 正在创建 $BACKEND 连接配置 \"$REMOTE\"。如出现 rclone 配置向导，请按提示完成。"
   "$RCLONE" config create "$REMOTE" "$BACKEND"
+}
+
+configure_ftp_remote() {
+  ensure_rclone
+  echo "[配置] 正在配置 FTP 连接 \"$REMOTE\"。"
+
+  host_name="$(read_required_text "请输入 FTP 主机，例如 ftp.example.com")"
+  echo "请选择加密方式："
+  echo "1) 普通 FTP"
+  echo "2) 显式 FTPS"
+  echo "3) 隐式 FTPS"
+  printf "请选择 [默认：1]: "
+  read -r tls_choice
+  [ -n "$tls_choice" ] || tls_choice="1"
+
+  case "$tls_choice" in
+    1) tls="false"; explicit_tls="false"; default_port="21" ;;
+    2) tls="false"; explicit_tls="true"; default_port="21" ;;
+    3) tls="true"; explicit_tls="false"; default_port="990" ;;
+    *) echo "[错误] 无效的 FTP 加密方式选择。"; exit 1 ;;
+  esac
+
+  port="$(read_text_with_default "请输入 FTP 端口" "$default_port")"
+  case "$port" in
+    ''|*[!0-9]*) echo "[错误] FTP 端口必须是数字。"; exit 1 ;;
+  esac
+
+  default_user="$(id -un 2>/dev/null || printf "anonymous")"
+  user="$(read_text_with_default "请输入 FTP 用户名" "$default_user")"
+  printf "请输入 FTP 密码；匿名或无密码时直接回车: "
+  stty -echo 2>/dev/null || true
+  read -r password
+  stty echo 2>/dev/null || true
+  printf "\n"
+
+  config_action="create"
+  config_args=("config" "create" "$REMOTE" "ftp")
+  if "$RCLONE" listremotes | grep -Fxq "$REMOTE:"; then
+    config_action="update"
+    config_args=("config" "update" "$REMOTE")
+  fi
+
+  config_args+=(
+    "host" "$host_name"
+    "user" "$user"
+    "port" "$port"
+    "tls" "$tls"
+    "explicit_tls" "$explicit_tls"
+    "--obscure"
+    "--non-interactive"
+  )
+
+  if [ -n "$password" ]; then
+    config_args=("config" "$config_action")
+    if [ "$config_action" = "create" ]; then
+      config_args+=("$REMOTE" "ftp")
+    else
+      config_args+=("$REMOTE")
+    fi
+    config_args+=(
+      "host" "$host_name"
+      "user" "$user"
+      "port" "$port"
+      "pass" "$password"
+      "tls" "$tls"
+      "explicit_tls" "$explicit_tls"
+      "--obscure"
+      "--non-interactive"
+    )
+  fi
+
+  "$RCLONE" "${config_args[@]}"
+  password=""
+  echo "[完成] FTP 连接配置已保存。"
 }
 
 test_rc_online() {
@@ -315,6 +425,15 @@ select_settings() {
       ;;
     *) echo "[错误] 无效的连接类型选择。"; exit 1 ;;
   esac
+
+  if [ "$BACKEND" = "ftp" ]; then
+    configure_ftp_remote
+    printf "请输入 FTP 远端目录，例如 / 或 /public，直接回车使用根目录: "
+    read -r ftp_remote_path
+    REMOTE_PATH="$(normalize_remote_path "$ftp_remote_path")"
+  else
+    REMOTE_PATH=""
+  fi
 
   printf "请输入挂载目录，直接回车使用 %s: " "$MOUNT_POINT"
   read -r mount_input

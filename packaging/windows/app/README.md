@@ -60,6 +60,12 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 
 如果 FTP 连接配置被手动删除，请在管理器中选择 `切换连接类型或盘符` 后重新配置 FTP。
 
+没有现成 FTP 服务器时，可以在仓库源码目录运行本地模拟测试。它会临时启动一个本机 FTP 服务，然后验证列表、上传、读取和删除：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\tests\local-ftp-smoke.ps1
+```
+
 ## 飞书授权排查
 
 如果 WinFsp 和 rclone 都正常，但挂载后看不到飞书云盘内容，不要只检查 `auth status --verify`。该状态只能说明用户登录仍有效，不能证明云盘 API 权限可用。
