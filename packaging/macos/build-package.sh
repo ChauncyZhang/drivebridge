@@ -58,16 +58,18 @@ $brew_prefix/include/fuse"
 prepare_fuse_build_env() {
   fuse_include="$(find_fuse_include_dir || true)"
   if [ -z "$fuse_include" ]; then
-    echo "[错误] 未找到 macFUSE 开发头文件 fuse.h。"
-    echo "请先确认 macFUSE 已安装，并检查是否存在 fuse.h："
+    echo "[提示] 未找到 macFUSE 开发头文件 fuse.h。"
+    echo "       将构建不依赖 FUSE 头文件的 NFS 挂载版。"
+    echo "       如果你希望构建 FUSE 版，请先确认 macFUSE 开发头文件位置："
     echo "  sudo find /Library/Filesystems/macfuse.fs /usr/local/include /opt/homebrew/include -name fuse.h -print"
-    echo "如果找到了 fuse.h，请这样指定目录后重试："
+    echo "       如果找到了 fuse.h，请这样指定目录后重试："
     echo "  DRIVEBRIDGE_FUSE_INCLUDE=/path/to/include/that/contains/fuse.h ./packaging/macos/build-package.sh host"
-    exit 1
+    return 1
   fi
 
   export CGO_CFLAGS="$(append_unique_flag "${CGO_CFLAGS:-}" "-I$fuse_include")"
   echo "[检查] macFUSE 头文件：$fuse_include"
+  return 0
 }
 
 case "$ARCH" in
@@ -99,18 +101,33 @@ cp "$REPO_ROOT/COPYING" "$APP_OUT/LICENSE.rclone.txt"
 cp "$REPO_ROOT/NOTICE.md" "$APP_OUT/"
 cp "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "$APP_OUT/"
 
-prepare_fuse_build_env
+BUILD_TAGS=""
+BUILD_CGO="0"
+BUILD_MOUNT_MODE="nfs"
+if prepare_fuse_build_env; then
+  BUILD_TAGS="cmount"
+  BUILD_CGO="1"
+  BUILD_MOUNT_MODE="fuse"
+fi
 
 for target_arch in $ARCHES; do
-  echo "[构建] drivebridge-rclone-$target_arch"
+  echo "[构建] drivebridge-rclone-$target_arch ($BUILD_MOUNT_MODE)"
   (
     cd "$REPO_ROOT"
-    GOOS=darwin GOARCH="$target_arch" CGO_ENABLED=1 \
-      go build -trimpath -tags cmount -ldflags "-s -w" \
-      -o "$APP_OUT/drivebridge-rclone-$target_arch" .
+    if [ -n "$BUILD_TAGS" ]; then
+      GOOS=darwin GOARCH="$target_arch" CGO_ENABLED="$BUILD_CGO" \
+        go build -trimpath -tags "$BUILD_TAGS" -ldflags "-s -w" \
+        -o "$APP_OUT/drivebridge-rclone-$target_arch" .
+    else
+      GOOS=darwin GOARCH="$target_arch" CGO_ENABLED="$BUILD_CGO" \
+        go build -trimpath -ldflags "-s -w" \
+        -o "$APP_OUT/drivebridge-rclone-$target_arch" .
+    fi
   )
   chmod +x "$APP_OUT/drivebridge-rclone-$target_arch"
 done
+
+printf "%s\n" "$BUILD_MOUNT_MODE" > "$APP_OUT/mount-mode.txt"
 
 if command -v npm >/dev/null 2>&1; then
   NPM_ROOT="$(npm root -g 2>/dev/null || true)"

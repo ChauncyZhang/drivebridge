@@ -99,7 +99,9 @@ chmod +x 启动DriveBridge.command app/drivebridge-manager.sh app/drivebridge-rc
 ./packaging/macos/build-package.sh both
 ```
 
-如果构建时报 `fatal error: 'fuse.h' file not found`，说明当前机器缺少 macFUSE 开发头文件，或者头文件不在常见路径。先查找：
+构建脚本会优先生成 FUSE 挂载版。如果当前机器没有 macFUSE 开发头文件 `fuse.h`，脚本会自动退回到 NFS 挂载版，不再中断构建。NFS 版不依赖 macFUSE 头文件，但 macOS 挂载时可能会触发系统权限或密码提示。
+
+如果你希望强制构建 FUSE 版，但构建脚本提示找不到 `fuse.h`，先查找：
 
 ```bash
 sudo find /Library/Filesystems/macfuse.fs /usr/local/include /opt/homebrew/include -name fuse.h -print

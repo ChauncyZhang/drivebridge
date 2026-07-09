@@ -17,6 +17,7 @@ CACHE_MODE="writes"
 DIR_CACHE_TIME="1s"
 ATTR_TIMEOUT="1s"
 RC_ADDR="127.0.0.1:5574"
+MOUNT_COMMAND="auto"
 
 mkdir -p "$LOG_DIR"
 
@@ -47,6 +48,7 @@ save_settings() {
     printf "DIR_CACHE_TIME=%s\n" "$(shell_quote "$DIR_CACHE_TIME")"
     printf "ATTR_TIMEOUT=%s\n" "$(shell_quote "$ATTR_TIMEOUT")"
     printf "RC_ADDR=%s\n" "$(shell_quote "$RC_ADDR")"
+    printf "MOUNT_COMMAND=%s\n" "$(shell_quote "$MOUNT_COMMAND")"
   } > "$SETTINGS_FILE"
 }
 
@@ -106,6 +108,37 @@ initialize_macos_fuse_runtime() {
   if [ -n "$fuse_library" ]; then
     export CGOFUSE_LIBFUSE_PATH="$fuse_library"
   fi
+}
+
+has_rclone_command() {
+  command_name="$1"
+  "$RCLONE" help "$command_name" >/dev/null 2>&1
+}
+
+get_mount_command() {
+  load_settings
+  if [ "$MOUNT_COMMAND" != "auto" ]; then
+    printf "%s" "$MOUNT_COMMAND"
+    return
+  fi
+
+  if [ -f "$ROOT_DIR/mount-mode.txt" ]; then
+    mode="$(cat "$ROOT_DIR/mount-mode.txt" 2>/dev/null || true)"
+    if [ "$mode" = "nfs" ]; then
+      printf "nfsmount"
+      return
+    fi
+  fi
+
+  if has_rclone_command mount; then
+    printf "mount"
+    return
+  fi
+  if has_rclone_command nfsmount; then
+    printf "nfsmount"
+    return
+  fi
+  printf "mount"
 }
 
 invoke_lark_quiet() {
@@ -479,11 +512,15 @@ start_mount_worker_process() {
 mount_worker() {
   load_settings
   ensure_rclone
-  ensure_macos_fuse
-  initialize_macos_fuse_runtime
   mkdir -p "$MOUNT_POINT" "$LOG_DIR"
   remote_spec="$(get_remote_spec)"
-  exec "$RCLONE" mount "$remote_spec" "$MOUNT_POINT" \
+  mount_command="$(get_mount_command)"
+  if [ "$mount_command" = "mount" ]; then
+    ensure_macos_fuse
+    initialize_macos_fuse_runtime
+  fi
+
+  exec "$RCLONE" "$mount_command" "$remote_spec" "$MOUNT_POINT" \
     --vfs-cache-mode "$CACHE_MODE" \
     --vfs-write-back 1s \
     --links \
@@ -528,7 +565,10 @@ start_mount() {
   if [ "$BACKEND" = "feishu" ]; then
     ensure_lark_login
   fi
-  ensure_macos_fuse
+  mount_command="$(get_mount_command)"
+  if [ "$mount_command" = "mount" ]; then
+    ensure_macos_fuse
+  fi
 
   if test_rc_online && test_mount_point_ready; then
     echo "[提示] 托管挂载已在运行，连接状态已检查。"
@@ -542,7 +582,7 @@ start_mount() {
 
   reset_mount_log
   remote_spec="$(get_remote_spec)"
-  echo "[运行] 正在后台将 $remote_spec 挂载到 $MOUNT_POINT"
+  echo "[运行] 正在后台通过 $mount_command 将 $remote_spec 挂载到 $MOUNT_POINT"
   start_mount_worker_process
 
   i=0
@@ -598,6 +638,7 @@ show_status() {
   remote_path="$(normalize_remote_path "$REMOTE_PATH")"
   [ -n "$remote_path" ] && echo "远端目录：$remote_path"
   echo "挂载目录：$MOUNT_POINT"
+  echo "挂载方式：$(get_mount_command)"
   if [ "$AUTO_START" = "false" ]; then
     echo "登录启动：已关闭"
   else
@@ -633,6 +674,7 @@ show_diagnostics() {
     echo "远端目录：$remote_path"
   fi
   echo "挂载目录：$MOUNT_POINT"
+  echo "挂载方式：$(get_mount_command)"
   echo "RC 地址 ：$RC_ADDR"
   if test_startup_installed; then
     echo "启动项  ：已安装"
