@@ -99,6 +99,18 @@ chmod +x 启动DriveBridge.command app/drivebridge-manager.sh app/drivebridge-rc
 ./packaging/macos/build-package.sh both
 ```
 
+如果构建时报 `fatal error: 'fuse.h' file not found`，说明当前机器缺少 macFUSE 开发头文件，或者头文件不在常见路径。先查找：
+
+```bash
+sudo find /Library/Filesystems/macfuse.fs /usr/local/include /opt/homebrew/include -name fuse.h -print
+```
+
+如果能找到 `fuse.h`，把包含 `fuse.h` 的目录传给构建脚本：
+
+```bash
+DRIVEBRIDGE_FUSE_INCLUDE=/path/to/include/that/contains/fuse.h ./packaging/macos/build-package.sh host
+```
+
 ## 出处和许可证
 
 DriveBridge 是基于 rclone 的非官方修改版/封装版，不是 rclone、飞书、Lark 或 Lark Technologies 的官方项目。

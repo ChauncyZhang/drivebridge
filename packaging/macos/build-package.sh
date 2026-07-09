@@ -12,6 +12,64 @@ fi
 ARCH="${1:-host}"
 ZIP="${ZIP:-true}"
 
+append_unique_flag() {
+  current="$1"
+  flag="$2"
+  case " $current " in
+    *" $flag "*) printf "%s" "$current" ;;
+    *) printf "%s %s" "$current" "$flag" ;;
+  esac
+}
+
+find_fuse_include_dir() {
+  if [ -n "${DRIVEBRIDGE_FUSE_INCLUDE:-}" ] && [ -f "$DRIVEBRIDGE_FUSE_INCLUDE/fuse.h" ]; then
+    printf "%s" "$DRIVEBRIDGE_FUSE_INCLUDE"
+    return
+  fi
+
+  candidates="
+/usr/local/include/osxfuse/fuse
+/usr/local/include/fuse
+/opt/homebrew/include/osxfuse/fuse
+/opt/homebrew/include/fuse
+/opt/local/include/fuse
+/Library/Filesystems/macfuse.fs/Contents/Resources/include
+/Library/Filesystems/macfuse.fs/Contents/Resources/include/fuse
+/Library/Filesystems/macfuse.fs/Contents/Resources/include/osxfuse/fuse
+"
+
+  if command -v brew >/dev/null 2>&1; then
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+    if [ -n "$brew_prefix" ]; then
+      candidates="$candidates
+$brew_prefix/include/osxfuse/fuse
+$brew_prefix/include/fuse"
+    fi
+  fi
+
+  for candidate in $candidates; do
+    if [ -f "$candidate/fuse.h" ]; then
+      printf "%s" "$candidate"
+      return
+    fi
+  done
+}
+
+prepare_fuse_build_env() {
+  fuse_include="$(find_fuse_include_dir || true)"
+  if [ -z "$fuse_include" ]; then
+    echo "[错误] 未找到 macFUSE 开发头文件 fuse.h。"
+    echo "请先确认 macFUSE 已安装，并检查是否存在 fuse.h："
+    echo "  sudo find /Library/Filesystems/macfuse.fs /usr/local/include /opt/homebrew/include -name fuse.h -print"
+    echo "如果找到了 fuse.h，请这样指定目录后重试："
+    echo "  DRIVEBRIDGE_FUSE_INCLUDE=/path/to/include/that/contains/fuse.h ./packaging/macos/build-package.sh host"
+    exit 1
+  fi
+
+  export CGO_CFLAGS="$(append_unique_flag "${CGO_CFLAGS:-}" "-I$fuse_include")"
+  echo "[检查] macFUSE 头文件：$fuse_include"
+}
+
 case "$ARCH" in
   host)
     case "$(uname -m)" in
@@ -40,6 +98,8 @@ cp -R "$SCRIPT_DIR/app/." "$APP_OUT/"
 cp "$REPO_ROOT/COPYING" "$APP_OUT/LICENSE.rclone.txt"
 cp "$REPO_ROOT/NOTICE.md" "$APP_OUT/"
 cp "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "$APP_OUT/"
+
+prepare_fuse_build_env
 
 for target_arch in $ARCHES; do
   echo "[构建] drivebridge-rclone-$target_arch"

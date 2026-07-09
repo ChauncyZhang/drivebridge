@@ -80,6 +80,34 @@ ensure_macos_fuse() {
   exit 1
 }
 
+find_macos_fuse_library() {
+  if [ -n "${CGOFUSE_LIBFUSE_PATH:-}" ] && [ -f "$CGOFUSE_LIBFUSE_PATH" ]; then
+    printf "%s" "$CGOFUSE_LIBFUSE_PATH"
+    return
+  fi
+
+  for candidate in \
+    "/usr/local/lib/libfuse.2.dylib" \
+    "/usr/local/lib/libosxfuse.2.dylib" \
+    "/opt/homebrew/lib/libfuse.2.dylib" \
+    "/opt/homebrew/lib/libosxfuse.2.dylib" \
+    "/opt/local/lib/libfuse.2.dylib" \
+    "/Library/Filesystems/macfuse.fs/Contents/Resources/lib/libfuse.2.dylib" \
+    "/Library/Filesystems/macfuse.fs/Contents/Resources/lib/libosxfuse.2.dylib"; do
+    if [ -f "$candidate" ]; then
+      printf "%s" "$candidate"
+      return
+    fi
+  done
+}
+
+initialize_macos_fuse_runtime() {
+  fuse_library="$(find_macos_fuse_library || true)"
+  if [ -n "$fuse_library" ]; then
+    export CGOFUSE_LIBFUSE_PATH="$fuse_library"
+  fi
+}
+
 invoke_lark_quiet() {
   lark-cli "$@" >/dev/null 2>&1
 }
@@ -452,6 +480,7 @@ mount_worker() {
   load_settings
   ensure_rclone
   ensure_macos_fuse
+  initialize_macos_fuse_runtime
   mkdir -p "$MOUNT_POINT" "$LOG_DIR"
   remote_spec="$(get_remote_spec)"
   exec "$RCLONE" mount "$remote_spec" "$MOUNT_POINT" \
