@@ -1,6 +1,6 @@
 ﻿# DriveBridge Windows 版
 
-这个工具用于把飞书云盘挂载成 Windows 本地盘符，底层使用 rclone。Windows 包已内置运行飞书登录所需的 lark-cli 和 Node.js，普通用户不需要单独安装 lark-cli 或 Node.js。
+这个工具用于把飞书云盘、FTP 等远端存储挂载成 Windows 本地盘符，底层使用 rclone。Windows 包已内置运行飞书登录所需的 lark-cli 和 Node.js，普通用户不需要单独安装 lark-cli 或 Node.js。
 
 普通用户只需要双击外层目录的 `启动飞书云盘.cmd`。`app` 目录是内部程序文件，通常不需要打开。`rclone-feishu.exe` 是命令行程序，双击它只会显示 rclone 帮助信息。
 
@@ -20,9 +20,9 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 
 2. 双击外层目录的 `启动飞书云盘.cmd`。
 3. 选择 `挂载 / 启动`。
-4. 首次使用时会自动初始化飞书 CLI 配置并检查登录状态；如未登录，会打开飞书登录流程。如果窗口中显示验证链接，请复制到浏览器完成授权。
-5. 工具会在挂载前用当前用户身份验证飞书云盘必要权限和列表权限；如果登录有效但权限不足，会重新打开授权并要求包含 `space:document:retrieve`、`drive:file`、`space:document:delete`。
-6. 选择飞书云盘和盘符，例如 `X:`。
+4. 选择连接类型。飞书会自动初始化飞书 CLI 配置并检查登录状态；FTP 会用中文表单要求填写主机、端口、用户名、密码、加密方式和远端目录。
+5. 飞书连接会在挂载前用当前用户身份验证飞书云盘必要权限和列表权限；如果登录有效但权限不足，会重新打开授权并要求包含 `space:document:retrieve`、`drive:file`、`space:document:delete`。
+6. 选择挂载盘符，例如 `X:`。
 
 首次配置或切换配置后，工具会自动启用当前 Windows 用户的开机启动，不再额外询问。首次启动会立即在后台挂载，不需要重启 Windows。
 
@@ -47,6 +47,18 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 - `打开 rclone 高级配置`：进入 rclone 原生配置界面。
 - `卸载`：移除开机启动、停止挂载，并可选择删除配置和安装目录。
 - `诊断`：输出当前机器的挂载环境和错误日志，用于排查测试机问题。
+
+## FTP 配置
+
+选择 `FTP` 时，管理器会直接创建或更新 rclone 的 FTP 连接配置，不再进入 rclone 英文向导。需要填写：
+
+- 主机：例如 `ftp.example.com` 或内网 IP。
+- 加密方式：普通 FTP、显式 FTPS 或隐式 FTPS。
+- 端口：普通 FTP 和显式 FTPS 默认 `21`，隐式 FTPS 默认 `990`。
+- 用户名和密码：密码会写入 rclone 的加密配置，不写入 `rclone-feishu.settings.json`。
+- 远端目录：直接回车表示 FTP 根目录；也可以填写 `/public` 这类子目录。
+
+如果 FTP 连接配置被手动删除，请在管理器中选择 `切换连接类型或盘符` 后重新配置 FTP。
 
 ## 飞书授权排查
 

@@ -19,6 +19,7 @@ $winFspBinDirs = @(
 $defaultSettings = [ordered]@{
     Backend = "feishu"
     Remote = "Feishu"
+    RemotePath = ""
     MountPoint = "X:"
     AutoStart = "true"
     CacheMode = "writes"
@@ -239,6 +240,10 @@ function Ensure-Remote {
         return
     }
 
+    if ($Backend -ieq "ftp") {
+        throw "FTP 连接配置不存在。请在管理器中选择 切换连接类型或盘符 后重新配置 FTP。"
+    }
+
     Write-Host "[配置] 正在创建 $Backend 连接配置 `"$Remote`"。如出现 rclone 配置向导，请按提示完成。"
     & $rcloneExe config create $Remote $Backend
     if ($LASTEXITCODE -ne 0) {
@@ -256,6 +261,138 @@ function Normalize-MountPoint {
         $MountPoint += ":"
     }
     return $MountPoint.ToUpperInvariant()
+}
+
+function Normalize-RemotePath {
+    param([string]$RemotePath)
+    if ([string]::IsNullOrWhiteSpace($RemotePath)) {
+        return ""
+    }
+    $RemotePath = $RemotePath.Trim().Replace("\", "/")
+    if ($RemotePath -eq "/") {
+        return ""
+    }
+    if (-not $RemotePath.StartsWith("/")) {
+        $RemotePath = "/$RemotePath"
+    }
+    return $RemotePath
+}
+
+function Get-RemoteSpec {
+    param([pscustomobject]$Settings)
+    $remotePath = Normalize-RemotePath $Settings.RemotePath
+    if ([string]::IsNullOrWhiteSpace($remotePath)) {
+        return "$($Settings.Remote):"
+    }
+    return "$($Settings.Remote):$remotePath"
+}
+
+function Read-RequiredText {
+    param([string]$Prompt)
+    $value = Read-Host $Prompt
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw "$Prompt 不能为空"
+    }
+    return $value.Trim()
+}
+
+function Read-TextWithDefault {
+    param([string]$Prompt, [string]$Default)
+    $value = Read-Host "$Prompt [默认：$Default]"
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $Default
+    }
+    return $value.Trim()
+}
+
+function Convert-SecureStringToPlainText {
+    param([securestring]$SecureString)
+    if ($null -eq $SecureString) {
+        return ""
+    }
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    }
+    finally {
+        if ($bstr -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+}
+
+function Test-RemoteExists {
+    param([string]$Remote)
+    $list = & $rcloneExe listremotes
+    return ($list -contains "${Remote}:")
+}
+
+function Configure-FtpRemote {
+    param([string]$Remote)
+
+    Write-Host "[配置] 正在配置 FTP 连接 `"$Remote`"。"
+    $hostName = Read-RequiredText "请输入 FTP 主机，例如 ftp.example.com"
+    $tlsChoice = Read-Host "请选择加密方式：`n1) 普通 FTP`n2) 显式 FTPS`n3) 隐式 FTPS`n[默认：1]"
+    if ([string]::IsNullOrWhiteSpace($tlsChoice)) { $tlsChoice = "1" }
+    switch ($tlsChoice) {
+        "1" { $tls = "false"; $explicitTls = "false"; $defaultPort = "21" }
+        "2" { $tls = "false"; $explicitTls = "true"; $defaultPort = "21" }
+        "3" { $tls = "true"; $explicitTls = "false"; $defaultPort = "990" }
+        default { throw "无效的 FTP 加密方式选择" }
+    }
+    $port = Read-TextWithDefault "请输入 FTP 端口" $defaultPort
+    if ($port -notmatch '^\d+$') {
+        throw "FTP 端口必须是数字"
+    }
+    $user = Read-TextWithDefault "请输入 FTP 用户名" ([Environment]::UserName)
+    $securePassword = Read-Host "请输入 FTP 密码；匿名或无密码时直接回车" -AsSecureString
+    $plainPassword = Convert-SecureStringToPlainText $securePassword
+
+    $configAction = "create"
+    $args = @("config", "create", $Remote, "ftp")
+    if (Test-RemoteExists $Remote) {
+        $configAction = "update"
+        $args = @("config", "update", $Remote)
+    }
+    $args += @(
+        "host", $hostName,
+        "user", $user,
+        "port", $port,
+        "tls", $tls,
+        "explicit_tls", $explicitTls,
+        "--obscure",
+        "--non-interactive"
+    )
+    if (-not [string]::IsNullOrEmpty($plainPassword)) {
+        $args = @("config", $configAction)
+        if ($configAction -eq "create") {
+            $args += @($Remote, "ftp")
+        }
+        else {
+            $args += @($Remote)
+        }
+        $args += @(
+            "host", $hostName,
+            "user", $user,
+            "port", $port,
+            "pass", $plainPassword,
+            "tls", $tls,
+            "explicit_tls", $explicitTls,
+            "--obscure",
+            "--non-interactive"
+        )
+    }
+
+    try {
+        & $rcloneExe @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "创建或更新 FTP 连接配置失败"
+        }
+    }
+    finally {
+        $plainPassword = $null
+    }
+    Write-Host "[完成] FTP 连接配置已保存。"
 }
 
 function Select-BackendSettings {
@@ -280,6 +417,13 @@ function Select-BackendSettings {
     $settings = Get-Settings
     $settings.Backend = $backend.Trim()
     $settings.Remote = $remote.Trim()
+    if ($settings.Backend -ieq "ftp") {
+        Configure-FtpRemote -Remote $settings.Remote
+        $settings.RemotePath = Normalize-RemotePath (Read-Host "请输入 FTP 远端目录，例如 / 或 /public，直接回车使用根目录")
+    }
+    else {
+        $settings.RemotePath = ""
+    }
     $settings.MountPoint = Normalize-MountPoint (Read-Host "请输入挂载盘符，例如 X:，直接回车使用 $($settings.MountPoint)")
     $settings.AutoStart = "true"
     Save-Settings $settings
@@ -414,6 +558,9 @@ function Show-Status {
     $settings = Get-Settings
     Write-Host "连接类型：$($settings.Backend)"
     Write-Host "连接名称：$($settings.Remote)"
+    if (-not [string]::IsNullOrWhiteSpace((Normalize-RemotePath $settings.RemotePath))) {
+        Write-Host "远端目录：$(Normalize-RemotePath $settings.RemotePath)"
+    }
     Write-Host "挂载盘符：$($settings.MountPoint)"
     Write-Host "开机启动：$(if (Test-AutoStartEnabled $settings.AutoStart) { '已启用' } else { '已关闭' })"
     Write-Host "启动项  ：$(if (Test-StartupInstalled) { '已安装' } else { '未安装' })"
@@ -424,8 +571,9 @@ function Get-MountArgs {
     param([pscustomobject]$Settings)
 
     $logFile = Get-MountLogFile
+    $remoteSpec = Get-RemoteSpec $Settings
     return @(
-        "mount", "$($Settings.Remote):", $Settings.MountPoint,
+        "mount", $remoteSpec, $Settings.MountPoint,
         "--vfs-cache-mode", $Settings.CacheMode,
         "--vfs-write-back", "1s",
         "--links",
@@ -493,7 +641,7 @@ function Start-Mount {
     }
 
     if ((Test-RcOnline) -and (Test-MountPointReady)) {
-        Write-Host "[提示] 托管挂载已在运行，飞书权限已检查。"
+        Write-Host "[提示] 托管挂载已在运行，连接状态已检查。"
         return
     }
     if (Test-RcOnline) {
@@ -503,7 +651,7 @@ function Start-Mount {
     }
 
     Reset-MountLog
-    Write-Host "[运行] 正在后台将 $($settings.Remote): 挂载到 $($settings.MountPoint)"
+    Write-Host "[运行] 正在后台将 $(Get-RemoteSpec $settings) 挂载到 $($settings.MountPoint)"
     Start-MountWorkerProcess
 
     for ($i = 0; $i -lt 20; $i++) {
@@ -609,6 +757,7 @@ function Show-Diagnostics {
     Write-Host "rclone ：$rcloneExe"
     Write-Host "连接类型：$($settings.Backend)"
     Write-Host "连接名称：$($settings.Remote)"
+    Write-Host "远端目录：$(if ([string]::IsNullOrWhiteSpace((Normalize-RemotePath $settings.RemotePath))) { '/' } else { Normalize-RemotePath $settings.RemotePath })"
     Write-Host "挂载盘符：$mountPoint"
     Write-Host "RC 地址 ：$($settings.RcAddr)"
     Write-Host "启动项  ：$(if (Test-StartupInstalled) { '已安装' } else { '未安装' })"
@@ -624,15 +773,17 @@ function Show-Diagnostics {
         }
     }
 
-    Invoke-DiagnosticCommand "lark-cli" {
-        $cmd = Get-Command lark-cli -ErrorAction SilentlyContinue
-        Write-Host "lark-cli：$(if ($cmd) { $cmd.Source } else { '未找到' })"
-        $null = Invoke-LarkCli -CliArgs @("--version")
-        Write-Host "config show：$(if (Test-LarkConfig) { '成功' } else { '失败' })"
-        Write-Host "auth status --verify：$(if (Test-LarkAuth) { '成功' } else { '失败' })"
-        Write-Host "必要权限：$(if (Test-LarkRequiredScopes) { '成功' } else { '失败' })"
-        Write-Host "权限列表：$requiredFeishuScopes"
-        Write-Host "drive files list：$(if (Test-LarkDriveAccess) { '成功' } else { '失败' })"
+    if ($settings.Backend -ieq "feishu") {
+        Invoke-DiagnosticCommand "lark-cli" {
+            $cmd = Get-Command lark-cli -ErrorAction SilentlyContinue
+            Write-Host "lark-cli：$(if ($cmd) { $cmd.Source } else { '未找到' })"
+            $null = Invoke-LarkCli -CliArgs @("--version")
+            Write-Host "config show：$(if (Test-LarkConfig) { '成功' } else { '失败' })"
+            Write-Host "auth status --verify：$(if (Test-LarkAuth) { '成功' } else { '失败' })"
+            Write-Host "必要权限：$(if (Test-LarkRequiredScopes) { '成功' } else { '失败' })"
+            Write-Host "权限列表：$requiredFeishuScopes"
+            Write-Host "drive files list：$(if (Test-LarkDriveAccess) { '成功' } else { '失败' })"
+        }
     }
 
     Invoke-DiagnosticCommand "rclone" {
@@ -641,8 +792,8 @@ function Show-Diagnostics {
         & $rcloneExe listremotes
     }
 
-    Invoke-DiagnosticCommand "Feishu 后端列表" {
-        & $rcloneExe lsjson "$($settings.Remote):" --max-depth 1 --low-level-retries 1 --retries 1
+    Invoke-DiagnosticCommand "远端列表" {
+        & $rcloneExe lsjson (Get-RemoteSpec $settings) --max-depth 1 --low-level-retries 1 --retries 1
     }
 
     Invoke-DiagnosticCommand "RC 状态" {
