@@ -44,6 +44,29 @@ func TestVirtualURLOpenRange(t *testing.T) {
 	}
 }
 
+func TestDeleteType(t *testing.T) {
+	f := &Fs{name: "test", opt: Options{DocsAsURL: true}}
+
+	file := f.newObject("file.txt", driveItem{
+		Name:  "file.txt",
+		Token: "file-token",
+		Type:  "file",
+	}, false)
+	if got := file.deleteType(); got != "file" {
+		t.Fatalf("file delete type = %q, want file", got)
+	}
+
+	doc := f.newURLObject("doc.url", driveItem{
+		Name:  "doc",
+		Token: "doc-token",
+		Type:  "docx",
+		URL:   "https://example.feishu.cn/docx/doc-token",
+	})
+	if got := doc.deleteType(); got != "docx" {
+		t.Fatalf("virtual doc delete type = %q, want docx", got)
+	}
+}
+
 func TestLiveFeishuCLIBackend(t *testing.T) {
 	folderToken := strings.TrimSpace(os.Getenv("RCLONE_FEISHU_TEST_FOLDER_TOKEN"))
 	if folderToken == "" {

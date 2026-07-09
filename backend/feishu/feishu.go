@@ -525,15 +525,19 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 }
 
 func (o *Object) Remove(ctx context.Context) error {
-	if o.virtual {
-		return fs.ErrorPermissionDenied
-	}
-	if err := o.fs.cli.delete(ctx, o.token, "file"); err != nil {
+	if err := o.fs.cli.delete(ctx, o.token, o.deleteType()); err != nil {
 		return err
 	}
 	parent, _ := splitPath(o.fs.abs(o.remote))
 	o.fs.flushDir(parent)
 	return nil
+}
+
+func (o *Object) deleteType() string {
+	if o.fileType != "" {
+		return o.fileType
+	}
+	return "file"
 }
 
 func (o *Object) MimeType(ctx context.Context) string {

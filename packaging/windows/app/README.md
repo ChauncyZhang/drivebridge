@@ -67,7 +67,7 @@ winget install --id WinFsp.WinFsp --exact --accept-package-agreements --accept-s
 ## 已知限制
 
 - 当前 Feishu 列表接口无法稳定返回普通文件真实大小，资源管理器中可能显示 `0 KB`，打开或下载文件后才能获得真实大小。
-- 飞书在线文档会以 `.url` 快捷方式形式显示。
+- 飞书在线文档会以 `.url` 快捷方式形式显示；删除该 `.url` 会删除对应的飞书在线文档。
 - 开机启动只对当前 Windows 用户生效，不需要管理员权限。
 
 ## 文件说明
